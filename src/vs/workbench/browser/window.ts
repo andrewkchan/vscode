@@ -54,6 +54,29 @@ export abstract class BaseWindow extends Disposable {
 
 		this.registerFullScreenListeners(targetWindow.vscodeWindowId);
 		this.registerContextMenuListeners(targetWindow);
+		// DEBUG: high-rate setTimeout to stress-test aux-window timeout leak.
+		// Only install on the main window; aux windows would otherwise double up.
+		if (targetWindow === mainWindow) {
+			this.setupTimeoutLeakRepro();
+		}
+	}
+
+	private setupTimeoutLeakRepro(): void {
+		// ~100k timeouts/sec => ~3M leaked DisposableStore entries in 30s.
+		// Each setTimeout call inserts an un-cleaned entry into the main
+		// window's DisposableStore (the leak under test). Before any aux
+		// window is opened, enableMultiWindowAwareTimeout short-circuits
+		// to the original setTimeout, so this is cheap at startup.
+		console.warn('[achan] setupTimeoutLeakRepro installed');
+		const BURST = 1000;
+		const INTERVAL_MS = 10;
+		const tick = () => {
+			for (let i = 0; i < BURST; i++) {
+				mainWindow.setTimeout(() => { /* noop */ }, INTERVAL_MS);
+			}
+			mainWindow.setTimeout(tick, INTERVAL_MS);
+		};
+		tick();
 	}
 
 	//#region focus handling in multi-window applications
@@ -322,6 +345,23 @@ export class BrowserWindow extends BaseWindow {
 
 		// Smoke Test Driver
 		this.setupDriver();
+
+		// DEBUG: high-rate setTimeout to stress-test aux-window timeout leak.
+		// Schedules ~1000 timeouts/sec on the main window. Only inserts into
+		// the main window's DisposableStore once an aux window is open
+		// (see enableMultiWindowAwareTimeout), so this is cheap until then.
+		this.setupTimeoutLeakRepro();
+	}
+
+	private setupTimeoutLeakRepro(): void {
+		const TICKS_PER_BATCH = 10;
+		const tick = () => {
+			for (let i = 0; i < TICKS_PER_BATCH; i++) {
+				mainWindow.setTimeout(() => { /* noop */ }, 10);
+			}
+			mainWindow.setTimeout(tick, 10);
+		};
+		tick();
 	}
 
 	private setupDriver(): void {
